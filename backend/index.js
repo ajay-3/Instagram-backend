@@ -9,9 +9,8 @@ const userPosts          = require('./Data/userPosts');
 const userFollowers      = require('./Data/userFollow');
 const randomPosts        = require('./Data/randomPosts')
 const upload             = require("./services/file-upload");
-const jwt                = require('jsonwebtoken');
 
-const app = express();
+const app                = express();
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended:true}));
@@ -22,11 +21,11 @@ app.post("/api/register",async (req,res)=>{
   try{
   var exists = await userCredentials.findOne({userName:req.body.Name});
   if(exists){
-    res.json("userName Already exists")
+    return res.json({"message":"userName Already exists"});
   }
+  console.log(req.body);
   var user = new userCredentials({
   userName:req.body.Name,
-  email :req.body.Email,
   password:req.body.Password 
   });
   await user.save();
@@ -40,6 +39,7 @@ app.post("/api/register",async (req,res)=>{
 app.post("/api/login",async (req,res)=>{
   try {
     var user = await userCredentials.findOne({ userName: req.body.Name }).exec();
+    console.log(user);
     if(!user) {
       return res.json({ message: "The username does not exist" ,validity:"false"});
     }
@@ -72,7 +72,7 @@ app.post("/api/userProfile", async(req, res) =>{
     imageUrl :req.body.imageUrl
     });
     const userProfile = await user.save();
-    res.json(userProfile);
+    return res.json(userProfile);
   }catch(err){
     res.json({message:err})
   }
@@ -82,9 +82,9 @@ app.get("/api/userProfile",async(req,res)=>{
    try{
      const user = await userProfiles.findOne({"userName": req.headers.username});
      if(user){
-      res.json(user);
+     return  res.json(user);
      }else{
-       res.json("NoUser");
+     return res.json("NoUser");
      } 
    }catch(err){
     res.json({message:err})
@@ -95,7 +95,6 @@ app.post("/api/follow",async(req,res)=>{
   try{
       const user = await userFollowers.findOne({userName:req.headers.username});
       if(user){
-        console.log("enterd")
        await userFollowers.update({"userName":req.headers.username},{$push:{"following":req.body.searchUserName}});
        await userFollowers.update({"userName":req.body.searchUserName},{$push:{"followers":req.headers.username}});
        res.json(true); 
@@ -142,36 +141,40 @@ app.get("/api/count",async(req,res)=>{
   }
 })
 
-app.post("/api/posts",async(req,res)=>{
+app.post("/api/posts",async (req,res)=>{
   try{
     const user = await userPosts.findOne({userName:req.headers.username});
-    console.log(req.body);
     if(user){
-     const userPost=await userPosts.update({"userName":req.headers.username},{$push:{"posts": req.body}});
-      const user1 = await userPosts.findOne({userName:req.headers.username});
-      console.log(user1);
-    }else{
+      await userPosts.update({"userName":req.headers.username},{$push:{"posts": req.body}});
+      }else{
       const userpost = new userPosts({
       userName : req.headers.username,
       posts:req.body
-    }) 
-    const userPt=await userpost.save();
-    console.log(userPt);
+    });
+    await userpost.save();
   }}catch(err){
     res.json({message:err});
   }
 });
 
 app.get("/api/posts",async(req,res)=>{
-  const posts = await userPosts.findOne({userName:req.headers.username});
-  res.json(posts);
+  const result = await userPosts.findOne({userName:req.headers.username});
+  console.log(result);
+  if(result){
+    for(let i=0;i<result.posts.length-1;i++){
+      for(let j=i+1;j<result.posts.length;j++){
+        if(result.posts[i].imageUrl == result.posts[j].imageUrl)
+          result.posts.splice(j,1);
+      }
+    }
+  }
+  res.json(result);
 });
 
 app.put("/api/like",async(req,res)=>{
   try{
-    console.log(req.body);
      await userPosts.updateOne({"userName":req.body.postUserName,"posts.imageUrl":req.body.imageUrl},
-      {$inc:{"posts.$.likes":1}});
+      {$inc:{"posts.$.Likes":1}});
       var updated = await userPosts.findOne({"userName":req.body.postUserName},{"posts":1});
       res.json(updated);
   }catch(error){
@@ -179,41 +182,54 @@ app.put("/api/like",async(req,res)=>{
   }
 });
 
-app.put("/api/comment",async(req,res)=>{
+app.post("/api/comment",async(req,res)=>{
   try{
-    console.log(req.body);
-    console.log(req.headers);
-    await userPosts.updateOne({"userName":req.body.postUserName,"posts.imageUrl":req.body.imageUrl},
+    await userPosts.update({"userName":req.body.postUserName,"posts.imageUrl":req.body.imageUrl},
     {$push:{"posts.$.comment":{"userName":req.headers.username,"comment":req.body.comment}}});
     var updated = await userPosts.findOne({"userName":req.body.postUserName},{"posts":1});
-      res.json(updated);
-  }catch(error){
-    res.json({message:error});
-  }
-})
-
-
-
-app.get("/api/newsfeed",async(req,res)=> {
-  try{
-    const newsfeed=[];
-    const userfollowing = await userFollowers.findOne({"userName":req.headers.username},{following:1});
-    if(!userfollowing.following){
-      res.json("The user is not following anyone");
-    }
-    for(let i=0;i<userfollowing.following.length;i++){
-      const imagesArray =  await userPosts.find({"userName":userfollowing.following[i]},{posts:1});
-      var length=imagesArray[0].posts.length; 
-      var post = imagesArray[0].posts[length-1];
-      newsfeed.push({"userName":userfollowing.following[i],"post":post});
-    }
-    res.json(newsfeed);
+    res.json(updated);
   }catch(error){
     res.json({message:error});
   }
 });
 
-// $project:{post:{ $arrayElemAt: [ "posts", -1 ] }}
+app.get("/api/comment",async (req,res)=>{
+  try{
+  var imageComments = await userPosts.find({"userName":req.headers.postusername});
+  for(i=0;i<imageComments[0].posts.length;i++){
+    if(imageComments[0].posts[i].imageUrl == req.headers.imageurl){
+            return res.json(imageComments[0].posts[i].comment);
+          }
+  }
+    return res.json(null)
+  }catch(error){
+    res.json({message:error});
+  }
+  });
+
+
+
+  app.get("/api/newsfeed",async(req,res)=> {
+    try{
+      const newsfeed=[];
+      const userfollowing = await userFollowers.findOne({"userName":req.headers.username},{following:1});
+      if(!userfollowing){
+        return res.json(null);    
+     }else{
+      for(let i=0;i<userfollowing.following.length;i++){
+        const imagesArray =  await userPosts.find({"userName":userfollowing.following[i]},{posts:1});
+       if(imagesArray.length!=0){
+        var length=imagesArray[0].posts.length; 
+        var post = imagesArray[0].posts[length-1];
+        newsfeed.push({"userName":userfollowing.following[i],"post":post});}
+      }
+      res.json(newsfeed);
+     }     
+    }catch(error){
+      res.json({message:error});
+    }
+  });
+
 app.get("/api/randomNewsfeed", async(req,res) => {
     try{
         res.json(randomPosts);
